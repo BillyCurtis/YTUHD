@@ -1,0 +1,86 @@
+# Place this file at: .github/workflows/build.yml
+name: Build YTUHD
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sideload:
+        description: "Build with SIDELOAD=1 (for sideloaded YouTube IPAs — skips linking libundirect, per the README)"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.scheme }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: rootful
+            theos-repo: theos/theos
+            scheme-flag: ""
+          - scheme: rootless
+            theos-repo: theos/theos
+            scheme-flag: "THEOS_PACKAGE_SCHEME=rootless"
+          - scheme: roothide
+            theos-repo: roothide/theos
+            scheme-flag: "THEOS_PACKAGE_SCHEME=roothide"
+
+    steps:
+      - name: Checkout YTUHD
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          brew install make ldid xz zstd
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+
+      - name: Set up Theos
+        run: |
+          git clone --recursive --depth=1 https://github.com/${{ matrix.theos-repo }}.git "$GITHUB_WORKSPACE/theos"
+          echo "THEOS=$GITHUB_WORKSPACE/theos" >> $GITHUB_ENV
+
+      - name: Install iOS SDK (from theos/sdks)
+        run: |
+          git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks.git /tmp/sdks
+          cd /tmp/sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout
+          mkdir -p "$THEOS/sdks"
+          mv iPhoneOS16.5.sdk "$THEOS/sdks/"
+
+      - name: Build and install libundirect into Theos
+        run: |
+          git clone --depth=1 https://github.com/opa334/libundirect.git /tmp/libundirect
+          cd /tmp/libundirect
+          if [ "${{ matrix.scheme }}" = "rootful" ]; then
+            make FINALPACKAGE=1
+            cp -v ./.theos/obj/libundirect.dylib "$THEOS/lib/"
+          else
+            make FINALPACKAGE=1 ${{ matrix.scheme-flag }}
+            mkdir -p "$THEOS/lib/iphone/${{ matrix.scheme }}"
+            cp -v ./.theos/obj/libundirect.dylib "$THEOS/lib/iphone/${{ matrix.scheme }}/"
+          fi
+          mkdir -p "$THEOS/include/libundirect"
+          cp -v libundirect.h libundirect_dynamic.h libundirect_hookoverwrite.h "$THEOS/include/libundirect/"
+
+      - name: Build YTUHD package
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.sideload }}" = "true" ]; then
+            EXTRA="SIDELOAD=1"
+          fi
+          make clean package FINALPACKAGE=1 ${{ matrix.scheme-flag }} $EXTRA
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTUHD-${{ matrix.scheme }}${{ inputs.sideload == true && '-sideload' || '' }}
+          path: |
+            packages/*.deb
+            .theos/obj/YTUHD.dylib
+          if-no-files-found: error
