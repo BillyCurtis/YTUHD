@@ -1,0 +1,39 @@
+name: Build YTUHD
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Theos
+        uses: beerpiss/theos-action@v1
+        with:
+          theos-dir: theos
+
+      - name: Clone required headers into Theos
+        run: |
+          git clone --depth=1 https://github.com/PoomSmart/YouTubeHeader theos/include/YouTubeHeader
+          git clone --depth=1 https://github.com/PoomSmart/PSHeader theos/include/PSHeader
+
+      - name: Build package
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          make clean package DEBUG=0 FINALPACKAGE=1 SIDELOAD=1
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTUHD
+          path: packages/*.deb
