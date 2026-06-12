@@ -21,7 +21,7 @@ jobs:
       - name: Install build dependencies
         # meson + ninja are required to build dav1d (per README)
         run: |
-          brew install make ldid xz zstd meson ninja
+          brew install make ldid xz zstd meson ninja nasm
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Set up Theos
@@ -67,9 +67,16 @@ jobs:
             vendor/dav1d_ios
           key: vendor-libs-${{ runner.os }}-${{ steps.vendor-rev.outputs.rev }}-${{ hashFiles('vendor/build_libvpx.sh', 'vendor/build_dav1d.sh') }}
 
+      - name: Build vendor static libraries (libvpx + dav1d)
+        # The Makefile's lazy auto-build of these .a files does not reliably
+        # fire under Theos's recursive sub-makes, so the link step ends up
+        # with missing libvpx.a / libdav1d.a. Build them explicitly here.
+        # Skipped automatically when restored from the cache above.
+        run: |
+          [ -f vendor/libvpx_ios/libvpx.a ] || bash vendor/build_libvpx.sh
+          [ -f vendor/dav1d_ios/libdav1d.a ] || bash vendor/build_dav1d.sh
+
       - name: Build YTUHD (SIDELOAD=1)
-        # libvpx.a and libdav1d.a are built automatically by the Makefile
-        # on first run (or restored from cache on later runs).
         run: make clean package FINALPACKAGE=1 SIDELOAD=1
 
       - name: Upload build artifacts
