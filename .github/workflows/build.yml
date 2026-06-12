@@ -13,12 +13,15 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout YTUHD
+      - name: Checkout YTUHD (with libvpx + dav1d submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install build dependencies
+        # meson + ninja are required to build dav1d (per README)
         run: |
-          brew install make ldid xz zstd
+          brew install make ldid xz zstd meson ninja
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
       - name: Set up Theos
@@ -35,10 +38,15 @@ jobs:
           mkdir -p "$THEOS/sdks"
           mv iPhoneOS16.5.sdk "$THEOS/sdks/"
 
-      - name: Install libundirect headers
-        # SIDELOAD=1 skips linking libundirect.dylib, but Tweak.xm still
-        # imports <libundirect/libundirect_dynamic.h>, so the headers
-        # must exist in $THEOS/include for the build to compile.
+      - name: Install PSHeader and YouTubeHeader
+        run: |
+          git clone --depth=1 https://github.com/PoomSmart/PSHeader.git "$THEOS/include/PSHeader"
+          git clone --depth=1 https://github.com/PoomSmart/YouTubeHeader.git "$THEOS/include/YouTubeHeader"
+
+      - name: Install libundirect header
+        # Tweak.xm imports <libundirect/libundirect.h> unconditionally;
+        # with SIDELOAD=1 the implementation comes from the bundled
+        # libundirect_compact.m, but the header must still exist.
         run: |
           git clone --depth=1 https://github.com/opa334/libundirect.git /tmp/libundirect
           mkdir -p "$THEOS/include/libundirect"
@@ -47,7 +55,21 @@ jobs:
                 /tmp/libundirect/libundirect_hookoverwrite.h \
                 "$THEOS/include/libundirect/"
 
+      - name: Get vendor submodule revisions (for cache key)
+        id: vendor-rev
+        run: echo "rev=$(git rev-parse HEAD:vendor/libvpx)-$(git rev-parse HEAD:vendor/dav1d)" >> $GITHUB_OUTPUT
+
+      - name: Cache libvpx and dav1d static libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/libvpx_ios
+            vendor/dav1d_ios
+          key: vendor-libs-${{ runner.os }}-${{ steps.vendor-rev.outputs.rev }}-${{ hashFiles('vendor/build_libvpx.sh', 'vendor/build_dav1d.sh') }}
+
       - name: Build YTUHD (SIDELOAD=1)
+        # libvpx.a and libdav1d.a are built automatically by the Makefile
+        # on first run (or restored from cache on later runs).
         run: make clean package FINALPACKAGE=1 SIDELOAD=1
 
       - name: Upload build artifacts
